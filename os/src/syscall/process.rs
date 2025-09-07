@@ -1,6 +1,6 @@
 //! Process management syscalls
 use crate::{
-    task::{exit_current_and_run_next, suspend_current_and_run_next},
+    task::{exit_current_and_run_next, query_current_syscall_times, suspend_current_and_run_next},
     timer::get_time_us,
 };
 
@@ -39,7 +39,27 @@ pub fn sys_get_time(ts: *mut TimeVal, _tz: usize) -> isize {
 }
 
 // TODO: implement the syscall
-pub fn sys_trace(_trace_request: usize, _id: usize, _data: usize) -> isize {
-    trace!("kernel: sys_trace");
-    -1
+
+const READ_DATA: usize = 0;
+const WRITE_DATA: usize = 1;
+const QUERY_SYSCALL_TIME: usize = 2;
+
+pub fn sys_trace(trace_request: usize, id: usize, data: usize) -> isize {
+    match trace_request {
+        READ_DATA => {
+            let ptr = id as *const u8;
+
+            unsafe { *ptr as isize }
+        }
+        WRITE_DATA => {
+            let ptr = id as *mut u8;
+
+            unsafe { *ptr = data as u8 }
+
+            0
+        }
+        QUERY_SYSCALL_TIME => query_current_syscall_times(id) as isize,
+        _ => -1,
+        // _ => panic!("Unsupport trace_request for sys_trace"),
+    }
 }

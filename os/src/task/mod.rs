@@ -17,6 +17,7 @@ mod task;
 use crate::config::MAX_APP_NUM;
 use crate::loader::{get_num_app, init_app_cx};
 use crate::sync::UPSafeCell;
+use crate::syscall::{SYSCALL_EXIT, SYSCALL_GET_TIME, SYSCALL_TRACE, SYSCALL_WRITE, SYSCALL_YIELD};
 use lazy_static::*;
 use switch::__switch;
 pub use task::{TaskControlBlock, TaskStatus};
@@ -51,10 +52,7 @@ lazy_static! {
     /// Global variable: TASK_MANAGER
     pub static ref TASK_MANAGER: TaskManager = {
         let num_app = get_num_app();
-        let mut tasks = [TaskControlBlock {
-            task_cx: TaskContext::zero_init(),
-            task_status: TaskStatus::UnInit,
-        }; MAX_APP_NUM];
+        let mut tasks = [TaskControlBlock::new(); MAX_APP_NUM];
         for (i, task) in tasks.iter_mut().enumerate() {
             task.task_cx = TaskContext::goto_restore(init_app_cx(i));
             task.task_status = TaskStatus::Ready;
@@ -168,4 +166,38 @@ pub fn suspend_current_and_run_next() {
 pub fn exit_current_and_run_next() {
     mark_current_exited();
     run_next_task();
+}
+
+/// Modified: to inc syscall_time in the TCB of current task
+
+pub fn inc_current_syscall_times(syscall_id: usize) {
+    let mut inner = TASK_MANAGER.inner.exclusive_access();
+    let current_app_id = inner.current_task;
+    let current_tcb = inner.tasks.get_mut(current_app_id).unwrap();
+
+    match syscall_id {
+        SYSCALL_WRITE => current_tcb.sys_write_times += 1,
+        SYSCALL_EXIT => current_tcb.sys_exit_times += 1,
+        SYSCALL_YIELD => current_tcb.sys_yield_times += 1,
+        SYSCALL_GET_TIME => current_tcb.sys_get_time_times += 1,
+        SYSCALL_TRACE => current_tcb.sys_trace_times += 1,
+        _ => panic!("Unsupported syscall_id: {}", syscall_id),
+    }
+}
+
+/// Modified: to query syscall_time in the TCB of current task
+
+pub fn query_current_syscall_times(syscall_id: usize) -> usize {
+    let inner = TASK_MANAGER.inner.exclusive_access();
+    let current_app_id = inner.current_task;
+    let current_tcb = inner.tasks.get(current_app_id).unwrap();
+
+    match syscall_id {
+        SYSCALL_WRITE => current_tcb.sys_write_times,
+        SYSCALL_EXIT => current_tcb.sys_exit_times,
+        SYSCALL_YIELD => current_tcb.sys_yield_times,
+        SYSCALL_GET_TIME => current_tcb.sys_get_time_times,
+        SYSCALL_TRACE => current_tcb.sys_trace_times,
+        _ => panic!("Unsupported syscall_id: {}", syscall_id),
+    }
 }
