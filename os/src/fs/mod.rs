@@ -33,6 +33,19 @@ pub struct Stat {
     pad: [u64; 7],
 }
 
+impl Stat {
+    /// 构造一个新的 `Stat` 实例，初始化所有字段（包括私有字段 `pad`）
+    pub fn new(dev: u64, ino: u64, mode: StatMode, nlink: u32) -> Self {
+        Self {
+            dev,
+            ino,
+            mode,
+            nlink,
+            pad: [0; 7],
+        }
+    }
+}
+
 bitflags! {
     /// The mode of a inode
     /// whether a directory or a file
@@ -46,5 +59,7 @@ bitflags! {
     }
 }
 
-pub use inode::{list_apps, open_file, OSInode, OpenFlags};
+pub use inode::{
+    get_inode_number, get_nlink, link_file, list_apps, open_file, unlink_file, OSInode, OpenFlags,
+};
 pub use stdio::{Stdin, Stdout};

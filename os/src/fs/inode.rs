@@ -8,8 +8,8 @@ use super::File;
 use crate::drivers::BLOCK_DEVICE;
 use crate::mm::UserBuffer;
 use crate::sync::UPSafeCell;
-use alloc::sync::Arc;
 use alloc::vec::Vec;
+use alloc::{format, sync::Arc};
 use bitflags::*;
 use easy_fs::{EasyFileSystem, Inode};
 use lazy_static::*;
@@ -71,6 +71,17 @@ pub fn list_apps() {
     println!("**************/");
 }
 
+/// get inode number from an OsInode
+pub fn get_inode_number(os_inode: &OSInode) -> u32 {
+    let inner = os_inode.inner.exclusive_access();
+    inner.inode.get_inode_number()
+}
+/// get nlink info from an OsInode
+pub fn get_nlink(os_inode: &OSInode) -> u32 {
+    let inner = os_inode.inner.exclusive_access();
+    inner.inode.get_nlink()
+}
+
 bitflags! {
     ///  The flags argument to the open() system call is constructed by ORing together zero or more of the following values:
     pub struct OpenFlags: u32 {
@@ -123,6 +134,35 @@ pub fn open_file(name: &str, flags: OpenFlags) -> Option<Arc<OSInode>> {
             Arc::new(OSInode::new(readable, writable, inode))
         })
     }
+}
+/// link at a file
+pub fn link_file(old_name: &str, new_name: &str) {
+    // inc nlink of exsist inode
+    let inode_id = ROOT_INODE
+        .find(old_name)
+        .map(|inode| {
+            inode.increase_nlink();
+            inode.get_inode_number()
+        })
+        .expect(format!("[kernel] link_file: can't find file according {}", old_name).as_str());
+
+    // add direntry
+    ROOT_INODE.create_nlink(new_name, inode_id);
+}
+
+/// unlink at a file
+pub fn unlink_file(name: &str) -> bool {
+    // dec nlink of exsist inode
+    let _inode_id = ROOT_INODE
+        .find(name)
+        .map(|inode| {
+            inode.decrease_nlink();
+            inode.get_inode_number()
+        })
+        .expect(format!("[kernel] link_file: can't find file according {}", name).as_str());
+
+    // remove direntry
+    ROOT_INODE.remove_nlink(name)
 }
 
 impl File for OSInode {
