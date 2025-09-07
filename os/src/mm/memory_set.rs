@@ -1,12 +1,13 @@
 //! Implementation of [`MapArea`] and [`MemorySet`].
 
+use super::VPNRange;
 use super::{frame_alloc, FrameTracker};
 use super::{PTEFlags, PageTable, PageTableEntry};
 use super::{PhysAddr, PhysPageNum, VirtAddr, VirtPageNum};
-use super::{StepByOne, VPNRange};
 use crate::config::{
     KERNEL_STACK_SIZE, MEMORY_END, PAGE_SIZE, TRAMPOLINE, TRAP_CONTEXT_BASE, USER_STACK_SIZE,
 };
+use crate::mm::address::StepByOne;
 use crate::sync::UPSafeCell;
 use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
@@ -63,6 +64,18 @@ impl MemorySet {
             None,
         );
     }
+    /// Assume that start_va can be found as a beginning of some section
+    /// And meanwhile contains one or multiple sections
+    pub fn delete_framed_area(&mut self, start_va: VirtAddr, end_va: VirtAddr) {
+        let delete_range = VPNRange::new(start_va.floor(), end_va.ceil());
+
+        let _ = self.areas.iter_mut().for_each(|area| {
+            if delete_range.cover(area.vpn_range) {
+                area.unmap(&mut self.page_table);
+            }
+        });
+    }
+
     fn push(&mut self, mut map_area: MapArea, data: Option<&[u8]>) {
         map_area.map(&mut self.page_table);
         if let Some(data) = data {
@@ -263,6 +276,7 @@ impl MemorySet {
         }
     }
 }
+
 /// map area structure, controls a contiguous piece of virtual memory
 pub struct MapArea {
     vpn_range: VPNRange,

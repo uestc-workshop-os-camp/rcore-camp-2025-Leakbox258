@@ -1,6 +1,9 @@
 //! Implementation of [`PageTableEntry`] and [`PageTable`].
 
-use super::{frame_alloc, FrameTracker, PhysPageNum, StepByOne, VirtAddr, VirtPageNum};
+use crate::mm::address::StepByOne;
+use crate::mm::PhysAddr;
+
+use super::{frame_alloc, FrameTracker, PhysPageNum, VirtAddr, VirtPageNum};
 use alloc::vec;
 use alloc::vec::Vec;
 use bitflags::*;
@@ -57,6 +60,10 @@ impl PageTableEntry {
     /// The page pointered by page table entry is valid?
     pub fn is_valid(&self) -> bool {
         (self.flags() & PTEFlags::V) != PTEFlags::empty()
+    }
+    /// The page pointered by page table entry is user-sapce?
+    pub fn is_user(&self) -> bool {
+        (self.flags() & PTEFlags::U) != PTEFlags::empty()
     }
     /// The page pointered by page table entry is readable?
     pub fn readable(&self) -> bool {
@@ -178,4 +185,20 @@ pub fn translated_byte_buffer(token: usize, ptr: *const u8, len: usize) -> Vec<&
         start = end_va.into();
     }
     v
+}
+
+/// Translate a ptr in va to a ptr in pa
+pub fn translated_byte_ptr(token: usize, ptr: *const u8) -> Option<usize> {
+    let page_table = PageTable::from_token(token);
+    let start = ptr as usize;
+
+    let va: VirtAddr = start.into();
+    let vpn = va.floor();
+
+    match page_table.translate(vpn) {
+        Some(pte) => {
+            Some(usize::from(PhysAddr::from(pte.ppn())) | va.page_offset()) // pa as usize
+        }
+        None => None,
+    }
 }

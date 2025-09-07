@@ -15,6 +15,7 @@ mod switch;
 mod task;
 
 use crate::loader::{get_app_data, get_num_app};
+use crate::mm::{MapPermission, MemorySet, VirtAddr};
 use crate::sync::UPSafeCell;
 use crate::trap::TrapContext;
 use alloc::vec::Vec;
@@ -114,6 +115,15 @@ impl TaskManager {
             .find(|id| inner.tasks[*id].task_status == TaskStatus::Ready)
     }
 
+    /// Get the current 'Running' task's MemorySet
+    #[allow(unused)]
+    fn get_current_memory_set(&self) -> *mut MemorySet {
+        let mut inner = self.inner.exclusive_access();
+        let current_app_id = inner.current_task;
+
+        inner.tasks[current_app_id].get_memory_set()
+    }
+
     /// Get the current 'Running' task's token.
     fn get_current_token(&self) -> usize {
         let inner = self.inner.exclusive_access();
@@ -152,6 +162,31 @@ impl TaskManager {
         } else {
             panic!("All applications completed!");
         }
+    }
+
+    /// Insert a new framed area into the current 'Running' task's memory set.
+    pub fn insert_framed_area(
+        &self,
+        start_va: VirtAddr,
+        end_va: VirtAddr,
+        permission: MapPermission,
+    ) {
+        let mut inner = self.inner.exclusive_access();
+        let current_app_id = inner.current_task;
+
+        inner.tasks[current_app_id]
+            .memory_set
+            .insert_framed_area(start_va, end_va, permission);
+    }
+
+    /// Unmap an area in the current 'Running' task's memory set.
+    pub fn delete_framed_area(&self, start_va: VirtAddr, end_va: VirtAddr) {
+        let mut inner = TASK_MANAGER.inner.exclusive_access();
+        let current_app_id = inner.current_task;
+
+        inner.tasks[current_app_id]
+            .memory_set
+            .delete_framed_area(start_va, end_va);
     }
 }
 
@@ -201,4 +236,40 @@ pub fn current_trap_cx() -> &'static mut TrapContext {
 /// Change the current 'Running' task's program break
 pub fn change_program_brk(size: i32) -> Option<usize> {
     TASK_MANAGER.change_current_program_brk(size)
+}
+
+/// inc statistics when call syscall
+pub fn inc_current_syscall_times(syscall_id: usize) {
+    let mut inner = TASK_MANAGER.inner.exclusive_access();
+    let current_app_id = inner.current_task;
+    let current_tcb = inner.tasks.get_mut(current_app_id).unwrap();
+
+    match current_tcb.syscall_times.get_mut(&syscall_id) {
+        Some(times) => *times += 1,
+        None => {
+            current_tcb.syscall_times.insert(syscall_id, 1);
+        }
+    };
+}
+
+/// query syscall times in sys_trace
+pub fn query_current_syscall_times(syscall_id: usize) -> usize {
+    let inner = TASK_MANAGER.inner.exclusive_access();
+    let current_app_id = inner.current_task;
+    let current_tcb = inner.tasks.get(current_app_id).unwrap();
+
+    match current_tcb.syscall_times.get(&syscall_id) {
+        Some(times) => *times,
+        None => 0, // never called before
+    }
+}
+
+/// Insert a new framed area into the current 'Running' task's memory set.
+pub fn insert_framed_area(start_va: VirtAddr, end_va: VirtAddr, permission: MapPermission) {
+    TASK_MANAGER.insert_framed_area(start_va, end_va, permission);
+}
+
+/// Unmap an area in the current 'Running' task's memory set.
+pub fn delete_framed_area(start_va: VirtAddr, end_va: VirtAddr) {
+    TASK_MANAGER.delete_framed_area(start_va, end_va);
 }
