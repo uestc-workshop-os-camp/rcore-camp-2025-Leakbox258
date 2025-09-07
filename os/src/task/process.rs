@@ -7,8 +7,9 @@ use super::{add_task, SignalFlags};
 use super::{pid_alloc, PidHandle};
 use crate::fs::{File, Stdin, Stdout};
 use crate::mm::{translated_refmut, MemorySet, KERNEL_SPACE};
-use crate::sync::{Condvar, Mutex, Semaphore, UPSafeCell};
+use crate::sync::{Condvar, DeadLockDetect, DetectInfo, Mutex, Semaphore, UPSafeCell};
 use crate::trap::{trap_handler, TrapContext};
+use alloc::collections::btree_map::BTreeMap;
 use alloc::string::String;
 use alloc::sync::{Arc, Weak};
 use alloc::vec;
@@ -43,6 +44,8 @@ pub struct ProcessControlBlockInner {
     pub tasks: Vec<Option<Arc<TaskControlBlock>>>,
     /// task resource allocator
     pub task_res_allocator: RecycleAllocator,
+    /// enable DeadLock Detect or not
+    pub dead_lock_detect_enable: bool,
     /// mutex list
     pub mutex_list: Vec<Option<Arc<dyn Mutex>>>,
     /// semaphore list
@@ -84,6 +87,153 @@ impl ProcessControlBlockInner {
     }
 }
 
+impl DeadLockDetect for ProcessControlBlockInner {
+    // resources: mutex + semaphone
+    fn get_available(&self) -> Vec<usize> {
+        let mut available = Vec::new();
+
+        // mutex resource
+        available.append(
+            &mut self
+                .mutex_list
+                .iter()
+                .filter(|mutex| mutex.is_some())
+                .map(|mutex| {
+                    if mutex.clone().unwrap().is_lock() {
+                        0
+                    } else {
+                        1
+                    }
+                })
+                .collect::<Vec<_>>(),
+        );
+
+        // semaphore resource
+
+        available.append(
+            &mut self
+                .semaphore_list
+                .iter()
+                .filter(|sem| sem.is_some())
+                .map(|sem| {
+                    let upsafe_cell = &sem.clone().unwrap().inner;
+                    let inner = upsafe_cell.exclusive_access();
+
+                    if inner.count > 0 {
+                        inner.count as usize
+                    } else {
+                        0
+                    }
+                })
+                .collect::<Vec<_>>(),
+        );
+
+        available
+    }
+
+    fn get_allocation(&self) -> BTreeMap<usize, Vec<usize>> {
+        let mut allocation: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+
+        let mut resources: Vec<Arc<dyn DetectInfo>> = vec![];
+
+        self.mutex_list
+            .iter()
+            .filter(|mutex| mutex.is_some())
+            .for_each(|mutex| {
+                let res = mutex.clone().unwrap();
+
+                resources.push(res);
+            });
+
+        self.semaphore_list
+            .iter()
+            .filter(|sem| sem.is_some())
+            .for_each(|sem| {
+                let res = sem.clone().unwrap();
+                resources.push(res);
+            });
+
+        for (idx, res) in resources.iter().enumerate() {
+            let alloc = res.as_ref().get_allocation();
+
+            alloc.iter().for_each(|(tid, res)| {
+                if let Some(ref_mut) = allocation.get_mut(tid) {
+                    ref_mut[idx] = *res;
+                } else {
+                    let mut vec = vec![0; resources.len()];
+                    vec[idx] = *res;
+                    allocation.insert(*tid, vec);
+                }
+            });
+        }
+
+        allocation
+    }
+
+    fn get_need(&self) -> BTreeMap<usize, Vec<usize>> {
+        let mut need: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+
+        let mut resources: Vec<Arc<dyn DetectInfo>> = vec![];
+
+        self.mutex_list
+            .iter()
+            .filter(|mutex| mutex.is_some())
+            .for_each(|mutex| {
+                let res = mutex.clone().unwrap();
+
+                resources.push(res);
+            });
+
+        self.semaphore_list
+            .iter()
+            .filter(|sem| sem.is_some())
+            .for_each(|sem| {
+                let res = sem.clone().unwrap();
+                resources.push(res);
+            });
+
+        for (idx, res) in resources.iter().enumerate() {
+            let needs = res.as_ref().get_need();
+
+            needs.iter().for_each(|(tid, res)| {
+                if let Some(ref_mut) = need.get_mut(tid) {
+                    ref_mut[idx] = *res;
+                } else {
+                    let mut vec = vec![0; resources.len()];
+                    vec[idx] = *res;
+                    need.insert(*tid, vec);
+                }
+            });
+        }
+
+        need
+    }
+    /// count valid thread only ( tids )
+    fn get_threads(&self) -> Vec<usize> {
+        self.tasks
+            .iter()
+            .filter(|task| task.is_some())
+            .filter(|task| {
+                task.as_ref()
+                    .unwrap()
+                    .inner_exclusive_access()
+                    .res
+                    .as_ref()
+                    .is_some()
+            })
+            .map(|task| {
+                task.clone()
+                    .unwrap()
+                    .inner_exclusive_access()
+                    .res
+                    .as_ref()
+                    .unwrap()
+                    .tid
+            })
+            .collect::<Vec<_>>()
+    }
+}
+
 impl ProcessControlBlock {
     /// inner_exclusive_access
     pub fn inner_exclusive_access(&self) -> RefMut<'_, ProcessControlBlockInner> {
@@ -116,6 +266,7 @@ impl ProcessControlBlock {
                     signals: SignalFlags::empty(),
                     tasks: Vec::new(),
                     task_res_allocator: RecycleAllocator::new(),
+                    dead_lock_detect_enable: false,
                     mutex_list: Vec::new(),
                     semaphore_list: Vec::new(),
                     condvar_list: Vec::new(),
@@ -242,6 +393,7 @@ impl ProcessControlBlock {
                     signals: SignalFlags::empty(),
                     tasks: Vec::new(),
                     task_res_allocator: RecycleAllocator::new(),
+                    dead_lock_detect_enable: false,
                     mutex_list: Vec::new(),
                     semaphore_list: Vec::new(),
                     condvar_list: Vec::new(),
