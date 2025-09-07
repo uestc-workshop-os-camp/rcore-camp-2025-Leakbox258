@@ -21,7 +21,10 @@ mod switch;
 #[allow(clippy::module_inception)]
 mod task;
 
-use crate::loader::get_app_data_by_name;
+use crate::{
+    loader::get_app_data_by_name,
+    mm::{MapPermission, VirtAddr},
+};
 use alloc::sync::Arc;
 use lazy_static::*;
 pub use manager::{fetch_task, TaskManager};
@@ -114,4 +117,24 @@ lazy_static! {
 ///Add init process to the manager
 pub fn add_initproc() {
     add_task(INITPROC.clone());
+}
+
+/// Insert a new framed area into the current 'Running' task's memory set.
+pub fn insert_framed_area(start_va: VirtAddr, end_va: VirtAddr, permission: MapPermission) {
+    let cur_tlb = current_task().expect("[kernel] current_task: fetch task error");
+    let mut inner = cur_tlb.inner_exclusive_access();
+
+    inner
+        .memory_set
+        .insert_framed_area(start_va, end_va, permission);
+}
+
+/// Unmap an area in the current 'Running' task's memory set.
+pub fn delete_framed_area(start_va: VirtAddr) {
+    let cur_tlb = current_task().expect("[kernel] current_task: fetch task error");
+    let mut inner = cur_tlb.inner_exclusive_access();
+
+    inner
+        .memory_set
+        .remove_area_with_start_vpn(start_va.floor());
 }

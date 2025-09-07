@@ -213,3 +213,41 @@ pub fn translated_refmut<T>(token: usize, ptr: *mut T) -> &'static mut T {
         .unwrap()
         .get_mut()
 }
+/// Translate a vpn into a ppn and check if in the PTE
+pub fn translate_page_if(token: usize, vpn: VirtPageNum) -> bool {
+    let page_table = PageTable::from_token(token);
+    let pte = page_table.translate(vpn);
+    pte.is_some() && pte.as_ref().unwrap().is_valid()
+}
+
+/// all_in
+pub const PAGE_ALL_FOUND: usize = 0;
+/// !all_in && all_not_in
+pub const PAGE_PARTIAL_FOUND: usize = 1;
+/// all_not_in
+pub const PAGE_ALL_NOT_FOUND: usize = 2;
+
+/// Translate a range of vpns into ppns and check if all in PTEs
+pub fn translated_pages_if(token: usize, vpn_start: VirtPageNum, cnt: usize) -> usize {
+    let mut all_in = true;
+    let mut all_not_in = true;
+    let mut vpn = vpn_start;
+
+    for _ in 0..cnt {
+        if !translate_page_if(token, vpn) {
+            all_in = false;
+        } else {
+            all_not_in = false;
+        }
+
+        vpn.step();
+    }
+
+    if all_in {
+        PAGE_ALL_FOUND
+    } else if all_not_in {
+        PAGE_ALL_NOT_FOUND
+    } else {
+        PAGE_PARTIAL_FOUND
+    }
+}
